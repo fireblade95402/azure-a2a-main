@@ -221,10 +221,11 @@ class FoundryBrandingAgent:
             logger.info("Added file search capability")
         
         # Use context manager and create agent with all tools
+        model = os.getenv("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME", "gpt-4o")
         with project_client:
             if tool_resources:
                 self.agent = project_client.agents.create_agent(
-                    model="gpt-4o",
+                    model=model,
                     name="foundry-branding-agent",
                     instructions=self._get_agent_instructions(),
                     tools=tools,
@@ -232,7 +233,7 @@ class FoundryBrandingAgent:
                 )
             else:
                 self.agent = project_client.agents.create_agent(
-                    model="gpt-4o",
+                    model=model,
                     name="foundry-branding-agent",
                     instructions=self._get_agent_instructions(),
                     tools=tools
