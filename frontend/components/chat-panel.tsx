@@ -457,6 +457,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState("")
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const messagesContainerRef = useRef<HTMLDivElement>(null)
   const [isInferencing, setIsInferencing] = useState(false)
   const [inferenceSteps, setInferenceSteps] = useState<{ agent: string; status: string; imageUrl?: string; imageName?: string }[]>([])
   const [activeNode, setActiveNode] = useState<string | null>(null)
@@ -527,6 +528,13 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
       setMaskAttachment(null)
     }
   }, [refineTarget])
+
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    if (messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight
+    }
+  }, [messages])
 
   // Also clear uploaded files on component mount (page refresh)
   useEffect(() => {
@@ -1605,6 +1613,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
           </div>
         )}
         <div 
+          ref={messagesContainerRef}
           className={`h-full overflow-y-auto ${isDragOver ? '[&_*]:pointer-events-none' : ''}`}
           data-chat-drop-zone
           onDragOver={handleDragOver}
