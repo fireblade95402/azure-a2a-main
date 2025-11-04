@@ -1061,6 +1061,14 @@ class FoundryHostAgent2:
                 
                 Focus on precision and clarity in agent-to-agent coordination."""
 
+                ### 🚨 USE THIS FOR HUMAN ESCALATION IF NEEDED:HUMAN ESCALATION RULE, CHANGE AGENT NAME TO THE APPROPRIATE AGENT
+                #If the user says anything like "I want to talk to a human,"  
+                #you **must** call:
+                #send_message(
+                #    agent_name="ServiceNow, Web & Knowledge Agent",
+                #    message="User explicitly requested to speak with a human representative. Please assist with this request."
+                #)
+
         return f""" You are an intelligent **Multi-Agent Orchestrator** designed to coordinate specialized agents to produce complete, personalized responses.  
                 Your goal is to understand the user's request, engage the right agents in the right order, and respond in a friendly, professional tone.
 
@@ -1072,13 +1080,7 @@ class FoundryHostAgent2:
                 2. Identify which agents are relevant based on their specialized capabilities.
                 3. Plan the collaboration strategy leveraging each agent's skills.
 
-                ### 🚨 HUMAN ESCALATION RULE
-                If the user says anything like "I want to talk to a human,"  
-                you **must** call:
-                send_message(
-                agent_name="ServiceNow, Web & Knowledge Agent",
-                message="User explicitly requested to speak with a human representative. Please assist with this request."
-                )
+
 
                 ---
 

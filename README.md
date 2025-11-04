@@ -85,7 +85,7 @@ Install the following locally:
 
 Provision the following services in your Microsoft Azure subscription:
 
-- Azure AI Foundry 
+- Azure AI Foundry (make sure you have a model and embeddings model created)
 - Search Service *(optional but recommended)*
 - Storage Account *(optional but recommended)*
 - Application Insights *(optional)*

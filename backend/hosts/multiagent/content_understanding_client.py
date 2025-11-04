@@ -265,7 +265,7 @@ class AzureContentUnderstandingClient:
     def poll_result(
         self,
         response: Response,
-        timeout_seconds: int = 120,
+        timeout_seconds: int = 300,
         polling_interval_seconds: int = 2,
     ):
         """
@@ -273,7 +273,7 @@ class AzureContentUnderstandingClient:
 
         Args:
             response (Response): The initial response object containing the operation location.
-            timeout_seconds (int, optional): The maximum number of seconds to wait for the operation to complete. Defaults to 120.
+            timeout_seconds (int, optional): The maximum number of seconds to wait for the operation to complete. Defaults to 300.
             polling_interval_seconds (int, optional): The number of seconds to wait between polling attempts. Defaults to 2.
 
         Raises:
