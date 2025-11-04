@@ -201,6 +201,11 @@ function MaskEditorDialog({ open, imageUrl, onClose, onSave }: MaskEditorDialogP
     ctx.restore()
     lastPointRef.current = point
     setMaskDirty(true)
+    
+    // Debug: Log that we're drawing
+    if (!lastPointRef.current || Math.random() < 0.1) { // Log occasionally
+      console.log(`✏️ Drawing on canvas: mode=${mode}, brush=${brushSize}px, point=(${Math.round(point.x)},${Math.round(point.y)})`)
+    }
   }, [brushSize, getRelativePoint, mode])
 
   const handlePointerDown = useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
@@ -269,6 +274,7 @@ function MaskEditorDialog({ open, imageUrl, onClose, onSave }: MaskEditorDialogP
     const overlayData = sourceCtx.getImageData(0, 0, overlay.width, overlay.height)
     const exportData = exportCtx.createImageData(overlay.width, overlay.height)
 
+    // Initialize to white
     for (let i = 0; i < exportData.data.length; i += 4) {
       exportData.data[i] = 255
       exportData.data[i + 1] = 255
@@ -276,14 +282,22 @@ function MaskEditorDialog({ open, imageUrl, onClose, onSave }: MaskEditorDialogP
       exportData.data[i + 3] = 255
     }
 
+    // Convert drawn areas to transparent mask (OpenAI expects transparent = edit)
+    let drawnPixelCount = 0
     for (let i = 0; i < overlayData.data.length; i += 4) {
       const alpha = overlayData.data[i + 3]
       if (alpha > 10) {
         exportData.data[i] = 0
         exportData.data[i + 1] = 0
         exportData.data[i + 2] = 0
-        exportData.data[i + 3] = 0
+        exportData.data[i + 3] = 0  // Transparent (alpha=0) for areas to edit
+        drawnPixelCount++
       }
+    }
+    
+    console.log(`🎨 Mask creation: ${drawnPixelCount} drawn pixels found (canvas size: ${overlay.width}x${overlay.height})`)
+    if (drawnPixelCount === 0) {
+      console.warn('⚠️ No drawn pixels found! Mask will be completely white.')
     }
 
     exportCtx.putImageData(exportData, 0, 0)
@@ -956,7 +970,7 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
       unsubscribe("remote_agent_activity", handleRemoteAgentActivity)
       unsubscribe("file_uploaded", handleFileUploaded)
     }
-  }, [subscribe, unsubscribe, emit])
+  }, [subscribe, unsubscribe, emit, sendMessage, processedMessageIds])
 
   // Check authentication status and show welcome message only when logged in
   useEffect(() => {
@@ -1326,6 +1340,15 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
         ...(currentUser && {
           username: currentUser.name,
           userColor: currentUser.color
+        }),
+        // Include uploaded files as attachments so they display in chat
+        ...(uploadedFiles.length > 0 && {
+          attachments: uploadedFiles.map(file => ({
+            uri: file.uri,
+            fileName: file.filename,
+            fileSize: file.size,
+            mediaType: file.content_type
+          }))
         })
       }
       
@@ -1396,6 +1419,15 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
       ...(currentUser && {
         username: currentUser.name,
         userColor: currentUser.color
+      }),
+      // Include uploaded files as attachments so they display in chat
+      ...(uploadedFiles.length > 0 && {
+        attachments: uploadedFiles.map(file => ({
+          uri: file.uri,
+          fileName: file.filename,
+          fileSize: file.size,
+          mediaType: file.content_type
+        }))
       })
     }
     
@@ -1615,10 +1647,12 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
                       className={`rounded-lg p-3 max-w-md ${message.role === "user" ? "bg-slate-700 text-white" : "bg-muted"
                         }`}
                     >
-                      {message.attachments && message.attachments.length > 0 ? (
-                        <div className="flex flex-col gap-3">
+                      {message.attachments && message.attachments.length > 0 && (
+                        <div className="flex flex-col gap-3 mb-3">
                           {message.attachments.map((attachment, attachmentIndex) => {
                             const isImage = (attachment.mediaType || "").startsWith("image/")
+                            const isVideo = (attachment.mediaType || "").startsWith("video/")
+                            
                             if (isImage) {
                               return (
                                 <div key={`${message.id}-attachment-${attachmentIndex}`} className="flex flex-col gap-2">
@@ -1676,6 +1710,25 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
                                 </div>
                               )
                             }
+                            
+                            if (isVideo) {
+                              return (
+                                <div key={`${message.id}-attachment-${attachmentIndex}`} className="flex flex-col gap-2">
+                                  <div className="overflow-hidden rounded-lg border border-border bg-background">
+                                    <video
+                                      src={attachment.uri}
+                                      controls
+                                      className="w-full h-auto"
+                                    >
+                                      Your browser does not support the video tag.
+                                    </video>
+                                    <div className="px-3 py-2 text-xs text-muted-foreground border-t border-border bg-muted/50">
+                                      {attachment.fileName || "Video attachment"}
+                                    </div>
+                                  </div>
+                                </div>
+                              )
+                            }
 
                             return (
                               <a
@@ -1690,7 +1743,8 @@ export function ChatPanel({ dagNodes, dagLinks, agentMode, enableInterAgentMemor
                             )
                           })}
                         </div>
-                      ) : (
+                      )}
+                      {message.content && message.content.trim().length > 0 && (
                         <div className="text-sm prose prose-sm max-w-none dark:prose-invert">
                           <ReactMarkdown
                             remarkPlugins={[remarkGfm]}

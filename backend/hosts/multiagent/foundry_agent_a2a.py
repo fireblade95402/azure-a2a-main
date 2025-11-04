@@ -1553,11 +1553,17 @@ Analyze the plan and determine the next step. If you need information that isn't
                                             for artifact in response_obj.artifacts:
                                                 if hasattr(artifact, 'parts'):
                                                     for part in artifact.parts:
-                                                        # Add artifact parts to session context for next task
+                                                        # Add to _latest_processed_parts for agent-to-agent communication
                                                         if not hasattr(session_context, '_latest_processed_parts'):
                                                             session_context._latest_processed_parts = []
                                                         session_context._latest_processed_parts.append(part)
-                                                        print(f"📎 [Agent Mode] Added artifact to context: {getattr(part.root.file, 'name', 'unknown') if hasattr(part, 'root') and hasattr(part.root, 'file') else 'artifact'}")
+                                                        
+                                                        # ALSO add to _agent_generated_artifacts for final response display
+                                                        if not hasattr(session_context, '_agent_generated_artifacts'):
+                                                            session_context._agent_generated_artifacts = []
+                                                        session_context._agent_generated_artifacts.append(part)
+                                                        
+                                                        print(f"📎 [Agent Mode] Added agent-generated artifact to both lists: {getattr(part.root.file, 'name', 'unknown') if hasattr(part, 'root') and hasattr(part.root, 'file') else 'artifact'}")
                                                         
                                                         if hasattr(part, 'root'):
                                                             # File parts (images, documents, etc.)
@@ -2914,8 +2920,9 @@ Answer with just JSON:
                         file_obj = part_root.file
                         file_name = getattr(file_obj, 'name', 'unknown')
                         file_uri = getattr(file_obj, 'uri', 'no-uri')
-                        file_role = (part_root.metadata or {}).get("role", "no-role") if hasattr(part_root, "metadata") else "no-role"
-                        print(f"    → FilePart: name={file_name} role={file_role}")
+                        # Check role in metadata (primary location for remote agents)
+                        file_role = (part_root.metadata or {}).get("role", None) if hasattr(part_root, "metadata") else None
+                        print(f"    → FilePart: name={file_name} role={file_role or 'no-role'}")
                         print(f"    → URI: {file_uri[:80]}..." if len(file_uri) > 80 else f"    → URI: {file_uri}")
                     elif hasattr(part_root, "file") and getattr(part_root.file, "uri", None):
                         print(f"    → file name={getattr(part_root.file, 'name', 'unknown')} uri={part_root.file.uri}")
@@ -3044,14 +3051,14 @@ Answer with just JSON:
                 print(f"❌ Full traceback: {traceback.format_exc()}")
                 raise
             
-            log_debug(f"[STREAMING] Processing response from {agent_name}: {type(response)}")
+            print(f"🔄 [STREAMING] Processing response from {agent_name}: {type(response)}")
             
             # Simplified response processing for streaming execution
             if isinstance(response, Task):
                 task = response
                 
                 # DEBUG: Log task response structure
-                log_foundry_debug(f"Received Task response from {agent_name}:")
+                print(f"📊 Received Task response from {agent_name}:")
                 print(f"  • Task ID: {task.id if hasattr(task, 'id') else 'N/A'}")
                 print(f"  • Task state: {task.status.state if hasattr(task, 'status') else 'N/A'}")
                 print(f"  • Has status.message: {hasattr(task, 'status') and hasattr(task.status, 'message') and task.status.message is not None}")
@@ -3074,11 +3081,13 @@ Answer with just JSON:
                 session_context.agent_task_states[agent_name] = state_val
                 
                 # Handle task states
+                print(f"🔍 Checking task state: {task.status.state} == TaskState.completed? {task.status.state == TaskState.completed}")
+                print(f"🔍 task.status.state type: {type(task.status.state)}, TaskState.completed type: {type(TaskState.completed)}")
                 if task.status.state == TaskState.completed:
                     response_parts = []
                     
                     # DEBUG: Check what's in the task
-                    log_foundry_debug(f"Task completed - checking contents:")
+                    print(f"✅ Task completed - checking contents:")
                     print(f"  • task.status.message exists: {task.status.message is not None}")
                     if task.status.message:
                         print(f"  • task.status.message.parts count: {len(task.status.message.parts) if task.status.message.parts else 0}")
@@ -3097,11 +3106,18 @@ Answer with just JSON:
                             response_parts.extend(
                                 await self.convert_parts(artifact.parts, tool_context)
                             )
+                            # Store artifacts for UI display (Standard Mode)
+                            if hasattr(artifact, 'parts'):
+                                for part in artifact.parts:
+                                    if not hasattr(session_context, '_agent_generated_artifacts'):
+                                        session_context._agent_generated_artifacts = []
+                                    session_context._agent_generated_artifacts.append(part)
+                                    print(f"📎 [send_message] Added agent-generated artifact for UI display: {getattr(part.root.file, 'name', 'unknown') if hasattr(part, 'root') and hasattr(part.root, 'file') else 'artifact'}")
 
                     # DEBUG: Log what's now in _latest_processed_parts after conversion
                     if hasattr(session_context, "_latest_processed_parts"):
                         latest = session_context._latest_processed_parts
-                        log_foundry_debug(f"After convert_parts, _latest_processed_parts has {len(latest)} items:")
+                        print(f"📦 After convert_parts, _latest_processed_parts has {len(latest)} items:")
                         for idx, item in enumerate(latest):
                             if isinstance(item, (TextPart, DataPart, FilePart)):
                                 print(f"  • Item {idx}: {type(item).__name__}")
@@ -3111,6 +3127,19 @@ Answer with just JSON:
                                 print(f"  • Item {idx}: string (len={len(item)})")
                             else:
                                 print(f"  • Item {idx}: {type(item)}")
+                        
+                        # Add DataParts from _latest_processed_parts to _agent_generated_artifacts for UI display
+                        mode = "Agent Mode" if session_context.agent_mode else "Standard Mode"
+                        print(f"🔍 [{mode}] Checking for DataParts to add to _agent_generated_artifacts...")
+                        for item in latest:
+                            if isinstance(item, DataPart) or (hasattr(item, 'root') and isinstance(item.root, DataPart)):
+                                if not hasattr(session_context, '_agent_generated_artifacts'):
+                                    session_context._agent_generated_artifacts = []
+                                session_context._agent_generated_artifacts.append(item)
+                                print(f"📎 [STREAMING - {mode}] Added DataPart to _agent_generated_artifacts for UI display")
+                        
+                        if hasattr(session_context, '_agent_generated_artifacts'):
+                            print(f"✅ [{mode}] Total _agent_generated_artifacts: {len(session_context._agent_generated_artifacts)}")
 
                     self._update_last_host_turn(session_context, agent_name, response_parts)
                     
@@ -4425,6 +4454,7 @@ Original request: {message}"""
                 if not session_context.agent_mode:
                     print(f"⚠️ WARNING: Clearing {file_count_before} file parts because agent_mode is False")
                     session_context._latest_processed_parts = []
+                    session_context._agent_generated_artifacts = []
                 else:
                     # Keep files but log for debugging
                     file_count = len(session_context._latest_processed_parts)
@@ -4579,8 +4609,12 @@ Original request: {message}"""
             for processed in processed_parts:
                 prepared_parts_for_agents.extend(_wrap_for_agent(processed))
 
+            # Store prepared parts for sending to agents (includes user uploads for refinement)
             session_context._latest_processed_parts = prepared_parts_for_agents
+            # Clear the list for agent-generated artifacts (only NEW files from agents shown in response)
+            session_context._agent_generated_artifacts = []
             log_debug(f"📦 Prepared {len(prepared_parts_for_agents)} parts to attach for remote agents")
+            log_debug(f"📤 Cleared agent-generated artifacts list (will only show NEW files from agents)")
             
             # If files were processed, include information about them in the message
             file_info = []
@@ -4781,15 +4815,15 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                             final_response = self._extract_message_content(messages[0])
                             log_info(f"✅ [Agent Mode] Final synthesis extracted: {final_response[:200] if final_response else '(EMPTY!)'}...")
                             
-                            # Include accumulated artifacts from orchestration (e.g., generated images)
-                            # This ensures the UI can display images with "Refine this image" buttons
+                            # Include ONLY agent-generated artifacts (not user uploads)
+                            # This ensures the UI can display NEW images with "Refine this image" buttons
                             final_responses = [final_response]
-                            log_foundry_debug(f"Checking for artifacts to include in final response...")
-                            log_foundry_debug(f"session_context has _latest_processed_parts: {hasattr(session_context, '_latest_processed_parts')}")
-                            if hasattr(session_context, '_latest_processed_parts'):
-                                log_foundry_debug(f"_latest_processed_parts length: {len(session_context._latest_processed_parts)}")
+                            log_foundry_debug(f"Checking for agent-generated artifacts to include in final response...")
+                            log_foundry_debug(f"session_context has _agent_generated_artifacts: {hasattr(session_context, '_agent_generated_artifacts')}")
+                            if hasattr(session_context, '_agent_generated_artifacts'):
+                                log_foundry_debug(f"_agent_generated_artifacts length: {len(session_context._agent_generated_artifacts)}")
                                 artifact_dicts = []
-                                for idx, part in enumerate(session_context._latest_processed_parts):
+                                for idx, part in enumerate(session_context._agent_generated_artifacts):
                                     log_foundry_debug(f"Part {idx}: type={type(part)}")
                                     
                                     # Check for wrapped Part objects with .root
@@ -4806,18 +4840,18 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                                             log_foundry_debug(f"Part {idx} unwrapped DataPart with artifact-uri ✓")
                                             artifact_dicts.append(part.data)
                                 
-                                log_foundry_debug(f"Found {len(artifact_dicts)} artifact dicts")
+                                log_foundry_debug(f"Found {len(artifact_dicts)} artifact dicts from remote agents")
                                 if artifact_dicts:
-                                    log_debug(f"📦 [Agent Mode] Including {len(artifact_dicts)} artifact(s) in final response for UI display")
+                                    log_debug(f"📦 [Agent Mode] Including {len(artifact_dicts)} artifact(s) from remote agents in final response for UI display")
                                     final_responses.extend(artifact_dicts)
                                     for idx, artifact_data in enumerate(artifact_dicts):
                                         uri = artifact_data.get('artifact-uri', '')
                                         filename = artifact_data.get('file-name', 'unknown')
-                                        print(f"  • Artifact {idx+1}: {filename} (URI has SAS: {'?' in uri})")
+                                        print(f"  • Artifact {idx+1} from remote agent: {filename} (URI has SAS: {'?' in uri})")
                                 else:
-                                    print(f"⚠️ [DEBUG] No artifact dicts found in _latest_processed_parts")
+                                    print(f"⚠️ [DEBUG] No artifact dicts found (agent doesn't generate files)")
                             else:
-                                print(f"⚠️ [DEBUG] session_context does not have _latest_processed_parts")
+                                print(f"⚠️ [DEBUG] session_context does not have _agent_generated_artifacts")
                         else:
                             print(f"⚠️ [Agent Mode] No messages in synthesis response")
                             final_responses = ["Task orchestration completed successfully."]
@@ -4852,17 +4886,17 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                         print(f"⚠️ [Agent Mode] Synthesis failed ({error_msg}), but returning {len(orchestration_outputs)} agent outputs directly")
                         final_responses = orchestration_outputs
                         
-                        # Add artifacts if available
-                        if hasattr(session_context, '_latest_processed_parts'):
+                        # Add ONLY agent-generated artifacts if available
+                        if hasattr(session_context, '_agent_generated_artifacts'):
                             artifact_dicts = []
-                            for part in session_context._latest_processed_parts:
+                            for part in session_context._agent_generated_artifacts:
                                 if hasattr(part, 'root') and isinstance(part.root, DataPart) and isinstance(part.root.data, dict) and 'artifact-uri' in part.root.data:
                                     artifact_dicts.append(part.root.data)
                                 elif isinstance(part, DataPart) and isinstance(part.data, dict) and 'artifact-uri' in part.data:
                                     artifact_dicts.append(part.data)
                             
                             if artifact_dicts:
-                                log_debug(f"📦 [Agent Mode] Including {len(artifact_dicts)} artifact(s) in fallback response")
+                                log_debug(f"📦 [Agent Mode] Including {len(artifact_dicts)} agent-generated artifact(s) in fallback response")
                                 final_responses.extend(artifact_dicts)
                         
                         return final_responses
@@ -5044,11 +5078,11 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                     else:
                         final_responses.append(str(responses))
 
-                # Include artifacts (images, files) from processed parts for UI display
-                # This ensures images show up in Standard Mode just like in Agent Mode
-                if hasattr(session_context, '_latest_processed_parts'):
+                # Include ONLY agent-generated artifacts (not user uploads) in Standard Mode
+                # This ensures NEW images show up with "Refine" buttons, but user uploads don't echo
+                if hasattr(session_context, '_agent_generated_artifacts'):
                     artifact_dicts = []
-                    for part in session_context._latest_processed_parts:
+                    for part in session_context._agent_generated_artifacts:
                         # Check for wrapped Part objects with .root
                         if hasattr(part, 'root'):
                             if isinstance(part.root, DataPart) and isinstance(part.root.data, dict) and 'artifact-uri' in part.root.data:
@@ -5059,7 +5093,7 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                                 artifact_dicts.append(part.data)
                     
                     if artifact_dicts:
-                        log_debug(f"📦 [Standard Mode] Including {len(artifact_dicts)} artifact(s) in response for UI display")
+                        log_debug(f"📦 [Standard Mode] Including {len(artifact_dicts)} agent-generated artifact(s) in response for UI display")
                         final_responses.extend(artifact_dicts)
                         for idx, artifact_data in enumerate(artifact_dicts):
                             uri = artifact_data.get('artifact-uri', '')
@@ -6025,13 +6059,20 @@ IMPORTANT: Do NOT call any tools (send_message, list_remote_agents). All necessa
                         _register_role(artifact_uri, role_value)
 
                     if artifact_uri:
-                        file_part = FilePart(
-                            file=FileWithUri(
-                                name=item.data.get("file-name", metadata["artifact-id"]) or metadata["artifact-id"],
-                                mimeType=item.data.get("media-type", "application/octet-stream"),
-                                uri=artifact_uri,
-                            ),
-                        )
+                        # Create FileWithUri for remote agent processing
+                        file_with_uri_kwargs = {
+                            "name": item.data.get("file-name", metadata["artifact-id"]) or metadata["artifact-id"],
+                            "mimeType": item.data.get("media-type", "application/octet-stream"),
+                            "uri": artifact_uri,
+                        }
+                        
+                        # Create FilePart with metadata containing role (remote agents check p.metadata.role)
+                        file_part_kwargs = {"file": FileWithUri(**file_with_uri_kwargs)}
+                        if role_value:
+                            file_part_kwargs["metadata"] = {"role": role_value}
+                            print(f"🎭 Creating FilePart with metadata role='{role_value}' for {file_with_uri_kwargs['name']}")
+                        
+                        file_part = FilePart(**file_part_kwargs)
                         flattened_parts.append(file_part)
                         pending_file_parts.append(file_part)
                         _register_part_uri(file_part, artifact_uri)

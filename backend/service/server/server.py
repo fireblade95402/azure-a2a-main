@@ -245,12 +245,21 @@ class ConversationServer:
                         # Create Part with FilePart root (matching foundry agent expectations)
                         from a2a.types import Part as A2APart, FilePart as A2AFilePart
                         file_data = root['file']
-                        file_obj = FileWithUri(
-                            name=file_data.get('name', ''),
-                            uri=file_data.get('uri', ''),
-                            mimeType=file_data.get('mime_type', 'application/octet-stream')
-                        )
-                        transformed_parts.append(A2APart(root=A2AFilePart(file=file_obj)))
+                        
+                        # Extract role if present (needed for mask/base detection)
+                        file_kwargs = {
+                            'name': file_data.get('name', ''),
+                            'uri': file_data.get('uri', ''),
+                            'mimeType': file_data.get('mime_type', 'application/octet-stream')
+                        }
+                        
+                        # Create FilePart with metadata containing role
+                        file_part_kwargs = {'file': FileWithUri(**file_kwargs)}
+                        if file_data.get('role'):
+                            file_part_kwargs['metadata'] = {'role': file_data.get('role')}
+                            print(f"🎭 [server.py] Setting metadata role='{file_data.get('role')}' for file: {file_data.get('name', 'unknown')}")
+                        
+                        transformed_parts.append(A2APart(root=A2AFilePart(**file_part_kwargs)))
                     else:
                         # Fallback: treat as text
                         from a2a.types import Part as A2APart, TextPart as A2ATextPart
