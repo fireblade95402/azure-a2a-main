@@ -1558,12 +1558,9 @@ Analyze the plan and determine the next step. If you need information that isn't
                                                             session_context._latest_processed_parts = []
                                                         session_context._latest_processed_parts.append(part)
                                                         
-                                                        # ALSO add to _agent_generated_artifacts for final response display
-                                                        if not hasattr(session_context, '_agent_generated_artifacts'):
-                                                            session_context._agent_generated_artifacts = []
-                                                        session_context._agent_generated_artifacts.append(part)
-                                                        
-                                                        print(f"📎 [Agent Mode] Added agent-generated artifact to both lists: {getattr(part.root.file, 'name', 'unknown') if hasattr(part, 'root') and hasattr(part.root, 'file') else 'artifact'}")
+                                                        # NOTE: Not adding to _agent_generated_artifacts here
+                                                        # It will be added later during streaming processing (send_message)
+                                                        # to avoid duplicates since send_message processes _latest_processed_parts
                                                         
                                                         if hasattr(part, 'root'):
                                                             # File parts (images, documents, etc.)
@@ -3106,40 +3103,27 @@ Answer with just JSON:
                             response_parts.extend(
                                 await self.convert_parts(artifact.parts, tool_context)
                             )
-                            # Store artifacts for UI display (Standard Mode)
-                            if hasattr(artifact, 'parts'):
-                                for part in artifact.parts:
-                                    if not hasattr(session_context, '_agent_generated_artifacts'):
-                                        session_context._agent_generated_artifacts = []
-                                    session_context._agent_generated_artifacts.append(part)
-                                    print(f"📎 [send_message] Added agent-generated artifact for UI display: {getattr(part.root.file, 'name', 'unknown') if hasattr(part, 'root') and hasattr(part.root, 'file') else 'artifact'}")
+                            # Note: Artifacts will be added to _agent_generated_artifacts with deduplication
+                            # in the processing loop below (lines 3131-3168)
 
                     # DEBUG: Log what's now in _latest_processed_parts after conversion
                     if hasattr(session_context, "_latest_processed_parts"):
                         latest = session_context._latest_processed_parts
-                        print(f"📦 After convert_parts, _latest_processed_parts has {len(latest)} items:")
-                        for idx, item in enumerate(latest):
-                            if isinstance(item, (TextPart, DataPart, FilePart)):
-                                print(f"  • Item {idx}: {type(item).__name__}")
-                            elif isinstance(item, dict):
-                                print(f"  • Item {idx}: dict (keys={list(item.keys())[:5]}...)")
-                            elif isinstance(item, str):
-                                print(f"  • Item {idx}: string (len={len(item)})")
-                            else:
-                                print(f"  • Item {idx}: {type(item)}")
+                        print(f"📦 After convert_parts, _latest_processed_parts has {len(latest)} items total (accumulated)")
                         
-                        # Add DataParts from _latest_processed_parts to _agent_generated_artifacts for UI display
-                        mode = "Agent Mode" if session_context.agent_mode else "Standard Mode"
-                        print(f"🔍 [{mode}] Checking for DataParts to add to _agent_generated_artifacts...")
-                        for item in latest:
-                            if isinstance(item, DataPart) or (hasattr(item, 'root') and isinstance(item.root, DataPart)):
-                                if not hasattr(session_context, '_agent_generated_artifacts'):
-                                    session_context._agent_generated_artifacts = []
-                                session_context._agent_generated_artifacts.append(item)
-                                print(f"📎 [STREAMING - {mode}] Added DataPart to _agent_generated_artifacts for UI display")
-                        
-                        if hasattr(session_context, '_agent_generated_artifacts'):
-                            print(f"✅ [{mode}] Total _agent_generated_artifacts: {len(session_context._agent_generated_artifacts)}")
+                    # Add DataParts from THIS response to _agent_generated_artifacts for UI display
+                    # Use response_parts (from THIS agent) instead of _latest_processed_parts (accumulated)
+                    mode = "Agent Mode" if session_context.agent_mode else "Standard Mode"
+                    print(f"🔍 [{mode}] Checking response_parts ({len(response_parts)} items) for DataParts to add...")
+                    for item in response_parts:
+                        if isinstance(item, DataPart) or (hasattr(item, 'root') and isinstance(item.root, DataPart)):
+                            if not hasattr(session_context, '_agent_generated_artifacts'):
+                                session_context._agent_generated_artifacts = []
+                            session_context._agent_generated_artifacts.append(item)
+                            print(f"📎 [STREAMING - {mode}] Added DataPart from THIS response to _agent_generated_artifacts")
+                    
+                    if hasattr(session_context, '_agent_generated_artifacts'):
+                        print(f"✅ [{mode}] Total _agent_generated_artifacts: {len(session_context._agent_generated_artifacts)}")
 
                     self._update_last_host_turn(session_context, agent_name, response_parts)
                     
