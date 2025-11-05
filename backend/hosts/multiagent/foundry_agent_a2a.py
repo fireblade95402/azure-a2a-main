@@ -485,34 +485,67 @@ class FoundryHostAgent2:
                 await asyncio.to_thread(container_client.create_container)
                 print(f"✅ Azure Blob container '{self._azure_blob_container}' created")
             except Exception as create_err:
-                from azure.core.exceptions import ResourceExistsError
+                from azure.core.exceptions import ResourceExistsError, HttpResponseError
                 if isinstance(create_err, ResourceExistsError):
                     print(f"ℹ️ Azure Blob container '{self._azure_blob_container}' already exists")
+                elif isinstance(create_err, HttpResponseError) and create_err.error_code == "AuthorizationFailure":
+                    print(f"❌ Azure Blob authorization failed. Common causes:")
+                    print(f"   • Network firewall rules blocking access")
+                    print(f"   • Missing role assignments (Storage Blob Data Contributor)")
+                    print(f"   • Azure CLI not logged in (run 'az login')")
+                    print(f"   • Storage account key access disabled but managed identity not properly configured")
+                    print(f"💡 Run 'az storage account show -n azurea2astoragemwg --query networkRuleSet' to check network rules")
+                    print(f"💡 Falling back to local storage for file operations")
+                    self._azure_blob_client = None  # Disable blob storage
+                    return
                 else:
                     raise
 
             print("🔍 Azure Blob check: listing blobs (up to 5 entries)...")
             blob_count = 0
-            for blob in container_client.list_blobs(name_starts_with="a2a-artifacts/"):
-                print(f"   • Existing blob: {blob.name} (size={blob.size})")
-                blob_count += 1
-                if blob_count >= 5:
-                    print("   • ... additional blobs omitted ...")
-                    break
-            if blob_count == 0:
-                print("   • No blobs found yet in this container")
+            try:
+                for blob in container_client.list_blobs(name_starts_with="a2a-artifacts/"):
+                    print(f"   • Existing blob: {blob.name} (size={blob.size})")
+                    blob_count += 1
+                    if blob_count >= 5:
+                        print("   • ... additional blobs omitted ...")
+                        break
+                if blob_count == 0:
+                    print("   • No blobs found yet in this container")
+            except Exception as list_err:
+                print(f"⚠️ Could not list blobs: {list_err}")
+                print("   • Continuing with probe upload test...")
 
             print("🔍 Azure Blob check: uploading connectivity probe...")
             probe_blob_name = f"a2a-artifacts/_connectivity_probe_.txt"
             probe_client = container_client.get_blob_client(probe_blob_name)
             probe_payload = f"connection verified at {datetime.utcnow().isoformat()}"
-            await asyncio.to_thread(probe_client.upload_blob, probe_payload, overwrite=True)
-            print(f"✅ Azure Blob probe uploaded: {probe_blob_name}")
+            try:
+                await asyncio.to_thread(probe_client.upload_blob, probe_payload, overwrite=True)
+                print(f"✅ Azure Blob probe uploaded: {probe_blob_name}")
+                print(f"✅ Azure Blob Storage is fully operational!")
+            except Exception as upload_err:
+                from azure.core.exceptions import HttpResponseError
+                if isinstance(upload_err, HttpResponseError) and upload_err.error_code == "AuthorizationFailure":
+                    print(f"❌ Upload authorization failed - insufficient permissions")
+                    print(f"💡 Check that your user has 'Storage Blob Data Contributor' role")
+                    self._azure_blob_client = None  # Disable blob storage
+                else:
+                    raise upload_err
 
         except Exception as e:
             print(f"❌ Azure Blob verification failed: {e}")
-            import traceback
-            print(traceback.format_exc())
+            from azure.core.exceptions import HttpResponseError
+            if isinstance(e, HttpResponseError) and e.error_code == "AuthorizationFailure":
+                print(f"💡 Authorization troubleshooting:")
+                print(f"   1. Verify network rules: az storage account show -n azurea2astoragemwg --query networkRuleSet")
+                print(f"   2. Check role assignments: az role assignment list --assignee $(az account show --query user.name -o tsv)")
+                print(f"   3. Ensure Azure CLI login: az login")
+                print(f"   4. Application will use local storage as fallback")
+                self._azure_blob_client = None  # Graceful degradation
+            else:
+                import traceback
+                print(traceback.format_exc())
 
     def _clear_memory_on_startup(self):
         """Clear memory index automatically on startup for clean testing"""

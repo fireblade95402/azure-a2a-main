@@ -1006,18 +1006,36 @@ Read-Host "Press Enter to close this window"
 
     # Helper function to upload to Azure Blob Storage
     def upload_to_azure_blob(file_id: str, file_name: str, file_bytes: bytes, mime_type: str) -> str:
-        """Upload file to Azure Blob Storage and return public SAS URL."""
+        """Upload file to Azure Blob Storage and return public SAS URL using managed identity."""
         try:
             from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions, ContentSettings
+            from azure.identity import DefaultAzureCredential
             
-            # Get Azure connection details
-            connection_string = os.getenv('AZURE_STORAGE_CONNECTION_STRING')
-            if not connection_string:
-                print(f"[WARN] AZURE_STORAGE_CONNECTION_STRING not set, returning local path")
-                return f"/uploads/{file_id}"
+            # Check if managed identity is enabled
+            use_managed_identity = os.getenv('AZURE_STORAGE_USE_MANAGED_IDENTITY', 'false').lower() == 'true'
             
-            # Initialize blob client
-            blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+            if use_managed_identity:
+                # Use managed identity authentication
+                account_name = os.getenv('AZURE_STORAGE_ACCOUNT_NAME')
+                if not account_name:
+                    print(f"[WARN] AZURE_STORAGE_ACCOUNT_NAME not set, returning local path")
+                    return f"/uploads/{file_id}"
+                
+                # Initialize blob client with managed identity
+                credential = DefaultAzureCredential()
+                blob_service_client = BlobServiceClient(
+                    account_url=f"https://{account_name}.blob.core.windows.net",
+                    credential=credential
+                )
+            else:
+                # Fallback to connection string for backward compatibility
+                connection_string = os.getenv('AZURE_STORAGE_CONNECTION_STRING')
+                if not connection_string:
+                    print(f"[WARN] AZURE_STORAGE_CONNECTION_STRING not set, returning local path")
+                    return f"/uploads/{file_id}"
+                
+                # Initialize blob client with connection string
+                blob_service_client = BlobServiceClient.from_connection_string(connection_string)
             container_name = os.getenv('AZURE_BLOB_CONTAINER', 'a2a-files')
             
             # Generate blob name
@@ -1042,30 +1060,63 @@ Read-Host "Press Enter to close this window"
                 overwrite=True
             )
             
-            # Generate SAS token with 24-hour expiry
-            account_key = None
-            for part in connection_string.split(';'):
-                if part.startswith('AccountKey='):
-                    account_key = part.split('=', 1)[1]
-                    break
-            
-            if account_key:
-                sas_token = generate_blob_sas(
-                    account_name=blob_client.account_name,
-                    container_name=container_name,
-                    blob_name=blob_name,
-                    account_key=account_key,
-                    permission=BlobSasPermissions(read=True),
-                    expiry=datetime.now(UTC) + timedelta(hours=24),
-                    version="2023-11-03"
-                )
-                from log_config import log_debug
-                blob_url = f"{blob_client.url}?{sas_token}"
-                log_debug(f"File uploaded to Azure Blob: {blob_url[:100]}...")
-                return blob_url
+            if use_managed_identity:
+                # For managed identity, use user delegation SAS token
+                try:
+                    from azure.storage.blob import generate_blob_sas, UserDelegationKey
+                    
+                    # Get user delegation key (requires Storage Blob Data Contributor role)
+                    key_start_time = datetime.now(UTC)
+                    key_expiry_time = key_start_time + timedelta(hours=24)
+                    user_delegation_key = blob_service_client.get_user_delegation_key(
+                        key_start_time=key_start_time,
+                        key_expiry_time=key_expiry_time
+                    )
+                    
+                    # Generate user delegation SAS token
+                    sas_token = generate_blob_sas(
+                        account_name=blob_service_client.account_name,
+                        container_name=container_name,
+                        blob_name=blob_name,
+                        user_delegation_key=user_delegation_key,
+                        permission=BlobSasPermissions(read=True),
+                        expiry=datetime.now(UTC) + timedelta(hours=24),
+                        start=datetime.now(UTC)
+                    )
+                    
+                    from log_config import log_debug
+                    blob_url = f"{blob_client.url}?{sas_token}"
+                    log_debug(f"File uploaded to Azure Blob with managed identity: {blob_url[:100]}...")
+                    return blob_url
+                    
+                except Exception as sas_error:
+                    print(f"[WARN] Could not generate user delegation SAS token: {sas_error}, returning blob URL without SAS")
+                    return blob_client.url
             else:
-                print(f"[WARN] Could not generate SAS token, returning blob URL without SAS")
-                return blob_client.url
+                # Generate SAS token with account key (legacy method)
+                account_key = None
+                for part in connection_string.split(';'):
+                    if part.startswith('AccountKey='):
+                        account_key = part.split('=', 1)[1]
+                        break
+                
+                if account_key:
+                    sas_token = generate_blob_sas(
+                        account_name=blob_client.account_name,
+                        container_name=container_name,
+                        blob_name=blob_name,
+                        account_key=account_key,
+                        permission=BlobSasPermissions(read=True),
+                        expiry=datetime.now(UTC) + timedelta(hours=24),
+                        version="2023-11-03"
+                    )
+                    from log_config import log_debug
+                    blob_url = f"{blob_client.url}?{sas_token}"
+                    log_debug(f"File uploaded to Azure Blob: {blob_url[:100]}...")
+                    return blob_url
+                else:
+                    print(f"[WARN] Could not generate SAS token, returning blob URL without SAS")
+                    return blob_client.url
                 
         except Exception as e:
             print(f"[ERROR] Azure Blob upload failed: {e}, falling back to local storage")

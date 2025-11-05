@@ -110,6 +110,20 @@
       "color": "#3B82F6",
       "created_at": "2025-09-25T20:02:17.660908Z",
       "last_login": "2025-09-25T21:10:22.285967Z"
+    },
+    {
+      "user_id": "user_8",
+      "email": "magraham@microsoft.com",
+      "password_hash": "02de3a56565696ff9cffe12d83c42a500c967bb6945efd011d52aef75361f5f8",
+      "name": "Mark G",
+      "role": "SE",
+      "description": "SE",
+      "skills": [
+        "Generalist"
+      ],
+      "color": "#3B82F6",
+      "created_at": "2025-11-05T12:45:03.766947Z",
+      "last_login": "2025-11-05T16:47:25.141010Z"
     }
   ]
 }
