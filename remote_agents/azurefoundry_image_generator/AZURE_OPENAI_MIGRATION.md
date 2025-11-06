@@ -45,6 +45,14 @@ client = OpenAI(
 - `AZURE_OPENAI_IMAGE_DEPLOYMENT_NAME` - Your deployed model name (defaults to "gpt-image-1")
 - `AZURE_AI_FOUNDRY_PROJECT_ENDPOINT` - Your AI Foundry project endpoint
 
+**Optional Environment Variables (Azure Blob Storage):**
+- `FORCE_AZURE_BLOB` - Set to "true" to enable blob storage uploads
+- `AZURE_STORAGE_ACCOUNT_URL` - Your storage account URL (recommended for managed identity)
+- `AZURE_STORAGE_ACCOUNT_NAME` - Your storage account name (alternative to URL)
+- `AZURE_STORAGE_CONNECTION_STRING` - Connection string (fallback for backward compatibility)
+- `AZURE_BLOB_CONTAINER` - Container name (defaults to "a2a-files")
+- `AZURE_BLOB_SIZE_THRESHOLD` - Minimum file size for blob upload (defaults to 8MB)
+
 **Example Values:**
 ```bash
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
@@ -52,6 +60,16 @@ AZURE_OPENAI_API_KEY=your-api-key-here
 AZURE_OPENAI_API_VERSION=2024-02-01
 AZURE_OPENAI_IMAGE_DEPLOYMENT_NAME=gpt-image-1
 AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=https://your-foundry-project.azure.com/
+
+# Azure Blob Storage (with managed identity)
+FORCE_AZURE_BLOB=true
+AZURE_STORAGE_ACCOUNT_URL=https://yourstorageaccount.blob.core.windows.net
+AZURE_BLOB_CONTAINER=a2a-files
+
+# Alternative blob storage configuration
+AZURE_STORAGE_ACCOUNT_NAME=yourstorageaccount
+# OR fallback to connection string
+AZURE_STORAGE_CONNECTION_STRING=DefaultEndpointsProtocol=https;AccountName=...
 ```
 
 ### 3. Authentication Methods
@@ -62,9 +80,27 @@ The implementation now supports two authentication methods:
 Set `AZURE_OPENAI_API_KEY` environment variable.
 
 #### Managed Identity Authentication (Recommended)
-- Don't set `AZURE_OPENAI_API_KEY`
+- Don't set `AZURE_OPENAI_API_KEY` or `AZURE_STORAGE_CONNECTION_STRING`
 - Ensure your environment has managed identity configured
 - Uses `DefaultAzureCredential` for authentication
+
+**Required Azure RBAC Roles for Managed Identity:**
+- **Cognitive Services OpenAI User** - For Azure OpenAI access
+- **Storage Blob Data Contributor** - For blob storage read/write operations
+- **Storage Blob Delegator** - For generating SAS tokens with user delegation keys
+
+**Assign roles using Azure CLI:**
+```bash
+# Get your managed identity principal ID
+PRINCIPAL_ID=$(az identity show --name your-identity-name --resource-group your-rg --query principalId -o tsv)
+
+# Assign OpenAI role
+az role assignment create --assignee $PRINCIPAL_ID --role "Cognitive Services OpenAI User" --scope "/subscriptions/your-sub/resourceGroups/your-rg/providers/Microsoft.CognitiveServices/accounts/your-openai-resource"
+
+# Assign storage roles
+az role assignment create --assignee $PRINCIPAL_ID --role "Storage Blob Data Contributor" --scope "/subscriptions/your-sub/resourceGroups/your-rg/providers/Microsoft.Storage/storageAccounts/your-storage-account"
+az role assignment create --assignee $PRINCIPAL_ID --role "Storage Blob Delegator" --scope "/subscriptions/your-sub/resourceGroups/your-rg/providers/Microsoft.Storage/storageAccounts/your-storage-account"
+```
 
 ### 4. Model Deployment Support
 
@@ -91,6 +127,8 @@ Updated the function tool description to reflect Azure deployment names:
 3. **Integration**: Better integration with other Azure AI services
 4. **Scalability**: Leverages Azure's global infrastructure
 5. **Cost Management**: Better cost tracking and management through Azure
+6. **Secure Storage**: Managed identity authentication for Azure Blob Storage
+7. **Fine-grained Access**: RBAC-based permissions for different Azure services
 
 ## Migration Checklist
 
@@ -102,6 +140,9 @@ Updated the function tool description to reflect Azure deployment names:
 - [x] Update tool descriptions
 - [x] Add comprehensive error handling
 - [x] Maintain backward compatibility
+- [x] Update blob storage to use managed identity
+- [x] Add Azure RBAC role documentation
+- [x] Improve error messages for managed identity scenarios
 
 ## Testing
 

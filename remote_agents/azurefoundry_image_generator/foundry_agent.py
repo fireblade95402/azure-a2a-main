@@ -95,26 +95,50 @@ class FoundryImageGeneratorAgent:
         self._pending_file_refs_by_thread: Dict[str, List[Dict[str, Any]]] = {}
 
     def _get_blob_service_client(self) -> Optional[BlobServiceClient]:
-        """Return a BlobServiceClient if Azure storage is configured and forced."""
+        """Return a BlobServiceClient using managed identity authentication (Azure best practice)."""
         force_blob = os.getenv("FORCE_AZURE_BLOB", "false").lower() == "true"
         if not force_blob:
             return None
         if self._blob_service_client is not None:
             return self._blob_service_client
 
-        connection_string = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
-        if not connection_string:
-            logger.error("AZURE_STORAGE_CONNECTION_STRING must be set when FORCE_AZURE_BLOB=true")
-            raise RuntimeError("Missing AZURE_STORAGE_CONNECTION_STRING for blob uploads")
+        # Get storage account URL - required for managed identity authentication
+        storage_account_url = os.getenv("AZURE_STORAGE_ACCOUNT_URL")
+        storage_account_name = os.getenv("AZURE_STORAGE_ACCOUNT_NAME")
+        
+        # Build URL if only account name is provided
+        if not storage_account_url and storage_account_name:
+            storage_account_url = f"https://{storage_account_name}.blob.core.windows.net"
+        
+        if not storage_account_url:
+            # Fallback to connection string for backward compatibility
+            connection_string = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+            if connection_string:
+                logger.warning("Using connection string authentication for blob storage. Consider migrating to managed identity.")
+                try:
+                    self._blob_service_client = BlobServiceClient.from_connection_string(
+                        connection_string,
+                        api_version="2023-11-03",
+                    )
+                    return self._blob_service_client
+                except Exception as e:
+                    logger.error(f"Failed to create BlobServiceClient with connection string: {e}")
+                    raise
+            else:
+                logger.error("Either AZURE_STORAGE_ACCOUNT_URL/AZURE_STORAGE_ACCOUNT_NAME or AZURE_STORAGE_CONNECTION_STRING must be set when FORCE_AZURE_BLOB=true")
+                raise RuntimeError("Missing Azure Storage configuration for blob uploads")
 
         try:
-            self._blob_service_client = BlobServiceClient.from_connection_string(
-                connection_string,
+            # Use managed identity authentication (recommended)
+            logger.info("Using managed identity authentication for Azure Blob Storage")
+            self._blob_service_client = BlobServiceClient(
+                account_url=storage_account_url,
+                credential=self.credential,  # Uses DefaultAzureCredential
                 api_version="2023-11-03",
             )
             return self._blob_service_client
         except Exception as e:
-            logger.error(f"Failed to create BlobServiceClient: {e}")
+            logger.error(f"Failed to create BlobServiceClient with managed identity: {e}")
             raise
         
     def _get_client(self) -> AgentsClient:
@@ -2077,6 +2101,8 @@ Always validate the prompt for safety before invoking the tool.
 
             if sas_token is None and self._blob_service_client is not None:
                 try:
+                    # Use user delegation key for managed identity authentication (recommended)
+                    logger.info("Generating SAS token using managed identity user delegation key")
                     delegation_key = self._blob_service_client.get_user_delegation_key(
                         key_start_time=datetime.utcnow() - timedelta(minutes=5),
                         key_expiry_time=datetime.utcnow() + timedelta(minutes=sas_duration_minutes),
@@ -2090,8 +2116,10 @@ Always validate the prompt for safety before invoking the tool.
                         expiry=datetime.utcnow() + timedelta(minutes=sas_duration_minutes),
                         version="2023-11-03",
                     )
+                    logger.info("Successfully generated SAS token using managed identity")
                 except Exception as ude_err:
-                    logger.warning(f"Failed to generate user delegation SAS: {ude_err}")
+                    logger.warning(f"Failed to generate user delegation SAS with managed identity: {ude_err}")
+                    logger.warning("Ensure the identity has 'Storage Blob Delegator' role assignment")
 
             if sas_token:
                 base_url = blob_client.get_blob_client(container=container_name, blob=blob_name).url
@@ -2099,7 +2127,11 @@ Always validate the prompt for safety before invoking the tool.
                 separator = '&' if '?' in base_url else '?'
                 return f"{base_url}{separator}{token}"
 
-            raise RuntimeError("Unable to generate SAS token for blob upload; verify storage credentials")
+            raise RuntimeError(
+                "Unable to generate SAS token for blob upload. For managed identity: "
+                "ensure the identity has 'Storage Blob Data Contributor' and 'Storage Blob Delegator' roles. "
+                "For key-based auth: verify AZURE_STORAGE_CONNECTION_STRING is correct."
+            )
         except Exception as e:
             logger.error(f"Failed to upload {file_path} to blob storage: {e}")
             return None
