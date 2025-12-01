@@ -5,8 +5,10 @@ Write-Host "🚀 Starting A2A System (Backend + Frontend + Remote Agents)..." -F
 Write-Host "================================================================" -ForegroundColor Cyan
 Write-Host ""
 
-# Array of all remote agent directories
-$agents = @(
+# Array of all services (backend, frontend, and remote agents)
+$services = @(
+    "backend",
+    "frontend",
     "azurefoundry_assessment",
     "azurefoundry_branding",
     "azurefoundry_claims",
@@ -18,14 +20,15 @@ $agents = @(
     "azurefoundry_legal"
 )
 
-# Interactive agent selection menu
-Write-Host "Select which agents to start:" -ForegroundColor Yellow
+# Interactive service selection menu
+Write-Host "Select which services to start:" -ForegroundColor Yellow
 Write-Host "================================" -ForegroundColor Yellow
 Write-Host ""
 
-$agentSelections = @{}
-for ($i = 0; $i -lt $agents.Count; $i++) {
-    $agentSelections[$agents[$i]] = $false
+$serviceSelections = @{}
+for ($i = 0; $i -lt $services.Count; $i++) {
+    # Backend and frontend are selected by default
+    $serviceSelections[$services[$i]] = ($services[$i] -eq "backend" -or $services[$i] -eq "frontend")
 }
 
 $selectedIndex = 0
@@ -34,25 +37,28 @@ $proceed = $false
 
 while (-not $proceed) {
     Clear-Host
-    Write-Host "🚀 Starting A2A System - Agent Selection" -ForegroundColor Cyan
+    Write-Host "🚀 Starting A2A System - Service Selection" -ForegroundColor Cyan
     Write-Host "================================================================" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "Use arrow keys to navigate, Space to select/deselect, Enter to start" -ForegroundColor Gray
     Write-Host ""
     
-    # Display agent list with checkboxes
-    for ($i = 0; $i -lt $agents.Count; $i++) {
-        $agent = $agents[$i]
-        $isSelected = $agentSelections[$agent]
+    # Display service list with checkboxes
+    for ($i = 0; $i -lt $services.Count; $i++) {
+        $service = $services[$i]
+        $isSelected = $serviceSelections[$service]
         $checkbox = if ($isSelected) { "☑️ " } else { "☐ " }
         $highlight = if ($i -eq $selectedIndex) { " ◄ " } else { "   " }
         $color = if ($i -eq $selectedIndex) { "Cyan" } else { "White" }
+        $label = if ($service -eq "backend") { "Backend (FastAPI)" }
+                elseif ($service -eq "frontend") { "Frontend (Next.js)" }
+                else { $service }
         
-        Write-Host "$checkbox$($i+1). $agent$highlight" -ForegroundColor $color
+        Write-Host "$checkbox$($i+1). $label$highlight" -ForegroundColor $color
     }
     
     Write-Host ""
-    Write-Host "Selected: $($agentSelections.Values | Where-Object { $_ } | Measure-Object).Count / $($agents.Count) agents" -ForegroundColor Green
+    Write-Host "Selected: $($serviceSelections.Values | Where-Object { $_ } | Measure-Object).Count / $($services.Count) services" -ForegroundColor Green
     Write-Host ""
     
     # Get keyboard input
@@ -61,17 +67,17 @@ while (-not $proceed) {
     if ($key.KeyDown) {
         switch ($key.VirtualKeyCode) {
             38 { # Up arrow
-                $selectedIndex = if ($selectedIndex -gt 0) { $selectedIndex - 1 } else { $agents.Count - 1 }
+                $selectedIndex = if ($selectedIndex -gt 0) { $selectedIndex - 1 } else { $services.Count - 1 }
             }
             40 { # Down arrow
-                $selectedIndex = if ($selectedIndex -lt $agents.Count - 1) { $selectedIndex + 1 } else { 0 }
+                $selectedIndex = if ($selectedIndex -lt $services.Count - 1) { $selectedIndex + 1 } else { 0 }
             }
             32 { # Space - toggle selection
-                $agent = $agents[$selectedIndex]
-                $agentSelections[$agent] = -not $agentSelections[$agent]
+                $service = $services[$selectedIndex]
+                $serviceSelections[$service] = -not $serviceSelections[$service]
             }
-            13 { # Enter - proceed with selected agents
-                $selectedAgents = @($agents | Where-Object { $agentSelections[$_] })
+            13 { # Enter - proceed with selected services
+                $selectedServices = @($services | Where-Object { $serviceSelections[$_] })
                 $proceed = $true
             }
         }
@@ -83,21 +89,28 @@ Write-Host "🚀 Starting A2A System (Backend + Frontend + Remote Agents)..." -F
 Write-Host "================================================================" -ForegroundColor Cyan
 Write-Host ""
 
-# Start Backend
-Write-Host "Starting Backend (FastAPI)..." -ForegroundColor Green
-$backendPath = Join-Path $baseDir "backend"
-Start-Process pwsh -ArgumentList "-NoExit", "-Command", "cd '$backendPath'; Write-Host 'Starting Backend...'; python.exe backend_production.py" -WindowStyle Normal
-Write-Host "✅ Backend started in new window" -ForegroundColor Green
-Start-Sleep -Milliseconds 1000
-Write-Host ""
+# Extract selected agents (exclude backend and frontend)
+$selectedAgents = @($selectedServices | Where-Object { $_ -ne "backend" -and $_ -ne "frontend" })
 
-# Start Frontend
-Write-Host "Starting Frontend (Next.js)..." -ForegroundColor Green
-$frontendPath = Join-Path $baseDir "frontend"
-Start-Process pwsh -ArgumentList "-NoExit", "-Command", "cd '$frontendPath'; Write-Host 'Starting Frontend...'; npm run dev" -WindowStyle Normal
-Write-Host "✅ Frontend started in new window" -ForegroundColor Green
-Start-Sleep -Milliseconds 1000
-Write-Host ""
+# Start Backend if selected
+if ($selectedServices -contains "backend") {
+    Write-Host "Starting Backend (FastAPI)..." -ForegroundColor Green
+    $backendPath = Join-Path $baseDir "backend"
+    Start-Process pwsh -ArgumentList "-NoExit", "-Command", "cd '$backendPath'; Write-Host 'Starting Backend...'; python.exe backend_production.py" -WindowStyle Normal
+    Write-Host "✅ Backend started in new window" -ForegroundColor Green
+    Start-Sleep -Milliseconds 1000
+    Write-Host ""
+}
+
+# Start Frontend if selected
+if ($selectedServices -contains "frontend") {
+    Write-Host "Starting Frontend (Next.js)..." -ForegroundColor Green
+    $frontendPath = Join-Path $baseDir "frontend"
+    Start-Process pwsh -ArgumentList "-NoExit", "-Command", "cd '$frontendPath'; Write-Host 'Starting Frontend...'; npm run dev" -WindowStyle Normal
+    Write-Host "✅ Frontend started in new window" -ForegroundColor Green
+    Start-Sleep -Milliseconds 1000
+    Write-Host ""
+}
 
 # Start Selected Remote Agents
 if ($selectedAgents.Count -gt 0) {
@@ -134,8 +147,12 @@ Write-Host "================================================================" -F
 Write-Host "✅ All selected services have been started!" -ForegroundColor Green
 Write-Host ""
 Write-Host "Services running:" -ForegroundColor Cyan
-Write-Host "  • Backend (FastAPI): http://localhost:8000" -ForegroundColor Gray
-Write-Host "  • Frontend (Next.js): http://localhost:3000" -ForegroundColor Gray
+if ($selectedServices -contains "backend") {
+    Write-Host "  • Backend (FastAPI): http://localhost:8000" -ForegroundColor Gray
+}
+if ($selectedServices -contains "frontend") {
+    Write-Host "  • Frontend (Next.js): http://localhost:3000" -ForegroundColor Gray
+}
 if ($selectedAgents.Count -gt 0) {
     Write-Host "  • Remote Agents ($($selectedAgents.Count)): Each in its own window" -ForegroundColor Gray
 }
