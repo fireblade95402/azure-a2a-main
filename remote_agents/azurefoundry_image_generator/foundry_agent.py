@@ -1263,12 +1263,74 @@ Always validate the prompt for safety before invoking the tool.
                     
         return self._openai_client
 
+    def _normalize_image_size(self, requested_size: str) -> str:
+        """Normalize requested image size to supported Azure OpenAI sizes.
+        
+        Azure OpenAI supports: 1024x1024, 1024x1536, 1536x1024, and auto
+        Maps common sizes to the closest supported option.
+        """
+        supported_sizes = ["1024x1024", "1024x1536", "1536x1024", "auto"]
+        
+        if not requested_size or requested_size == "auto":
+            return "1024x1024"  # Default to square
+        
+        requested_size_lower = str(requested_size).lower().strip()
+        
+        # If already supported, use it
+        if requested_size_lower in supported_sizes:
+            return requested_size_lower
+        
+        # Map common sizes to closest supported size
+        size_mappings = {
+            "512x512": "1024x1024",
+            "1024x768": "1024x1024",
+            "768x1024": "1024x1536",
+            "1792x1024": "1536x1024",  # Common DALL-E 3 size -> closest match
+            "1024x1792": "1024x1536",  # Another common size
+            "2048x2048": "1024x1024",
+            "1600x1200": "1536x1024",
+            "1200x1600": "1024x1536",
+        }
+        
+        mapped_size = size_mappings.get(requested_size_lower)
+        if mapped_size:
+            logger.info(
+                "Normalizing unsupported image size '%s' to supported size '%s'",
+                requested_size,
+                mapped_size,
+            )
+            return mapped_size
+        
+        # Fallback: parse dimensions and find closest supported size
+        try:
+            parts = requested_size_lower.split("x")
+            if len(parts) == 2:
+                width = int(parts[0])
+                height = int(parts[1])
+                
+                # Find closest supported size based on aspect ratio and total pixels
+                if width == height:
+                    return "1024x1024"
+                elif width > height:
+                    return "1536x1024"  # Landscape
+                else:
+                    return "1024x1536"  # Portrait
+        except (ValueError, IndexError):
+            pass
+        
+        logger.warning(
+            "Could not normalize image size '%s', using default 1024x1024",
+            requested_size,
+        )
+        return "1024x1024"
+
     def _generate_image_via_openai(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Call the Azure OpenAI image generation API and return metadata about the generated image."""
         client = self._get_openai_client()
         prompt = payload.get("prompt")
         style = payload.get("style")
-        size = payload.get("size", "1024x1024")
+        requested_size = payload.get("size", "1024x1024")
+        size = self._normalize_image_size(requested_size)
         n_images = int(payload.get("n", 1))
         
         # SAFETY: Force n=1 for agent-to-agent mode to prevent multiple image generation
@@ -1778,11 +1840,10 @@ Always validate the prompt for safety before invoking the tool.
             image_file_handles.append(base_handle)
 
             if overlay_bytes:
+                logger.warning("Overlay images are not supported by Azure OpenAI images.edit API - overlay will be ignored")
                 overlay_png = self._ensure_png(overlay_bytes)
                 overlay_file_path = self._write_temp_png(overlay_png)
                 temp_paths.append(overlay_file_path)
-                overlay_handle = open(overlay_file_path, "rb")
-                image_file_handles.append(overlay_handle)
 
             if mask_bytes:
                 mask_bytes = self._ensure_png(mask_bytes)
@@ -1798,11 +1859,11 @@ Always validate the prompt for safety before invoking the tool.
             if size:
                 edit_kwargs["size"] = size
 
-            edit_kwargs["image"] = image_file_handles
+            # Azure OpenAI images.edit expects a single file handle, not a list
+            edit_kwargs["image"] = base_handle
             logger.info(
-                "Invoking OpenAI images.edit | has_mask=%s | image_handles=%d | kwargs_keys=%s",
+                "Invoking Azure OpenAI images.edit | has_mask=%s | kwargs_keys=%s",
                 "mask" in edit_kwargs,
-                len(image_file_handles),
                 [key for key in edit_kwargs.keys() if key != "prompt"],
             )
             edit_response = client.images.edit(**edit_kwargs)
